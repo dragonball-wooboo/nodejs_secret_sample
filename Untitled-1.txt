@@ -1,1 +1,11 @@
-test
+1.gitscm을 설치를 한다.
+2.vscode를 실행을 한다. 
+3.아래 명령어를 친다.
+4.
+git config --global user.name "kimbawoo"
+git config --global user.email "bawoowow@naver.com"
+
+git remote add origin (복사한링크)
+
+5.push 를 해와서 싱크를 맞춘다. 
+
