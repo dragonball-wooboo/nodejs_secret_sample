@@ -2,8 +2,8 @@
 2.vscode를 실행을 한다. 
 3.아래 명령어를 친다.
 4.
-git config --global user.name "kimbawoo"
-git config --global user.email "bawoowow@naver.com"
+git config --global user.name "내이름"
+git config --global user.email "내이메일주소"
 
 git remote add origin (복사한링크)
 
