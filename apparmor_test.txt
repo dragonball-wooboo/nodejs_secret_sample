@@ -1,0 +1,172 @@
+참고자료: https://docs.docker.com/engine/security/apparmor/#understand-the-policies
+https://code.i-harness.com/ko-kr/docs/docker~17/engine/security/apparmor/index
+
+
+root@ubuntu16:~# docker run --rm -it --security-opt apparmor=docker-default hello-world
+Unable to find image 'hello-world:latest' locally
+latest: Pulling from library/hello-world
+d1725b59e92d: Pull complete 
+Digest: sha256:0add3ace90ecb4adbf7777e9aacf18357296e799f81cabc9fde470971e499788
+Status: Downloaded newer image for hello-world:latest
+
+Hello from Docker!
+This message shows that your installation appears to be working correctly.
+
+To generate this message, Docker took the following steps:
+ 1. The Docker client contacted the Docker daemon.
+ 2. The Docker daemon pulled the "hello-world" image from the Docker Hub.
+    (amd64)
+ 3. The Docker daemon created a new container from that image which runs the
+    executable that produces the output you are currently reading.
+ 4. The Docker daemon streamed that output to the Docker client, which sent it
+    to your terminal.
+
+root@ubuntu16:~# mkdir -p /etc/apparmor.d/containers
+root@ubuntu16:~# vim /etc/apparmor.d/containers/docker-nginx
+
+#include <tunables/global>
+
+
+profile docker-nginx flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  network inet tcp,
+  network inet udp,
+  network inet icmp,
+
+  deny network raw,
+
+  deny network packet,
+
+  file,
+  umount,
+
+  deny /bin/** wl,
+  deny /boot/** wl,
+  deny /dev/** wl,
+  deny /etc/** wl,
+  deny /home/** wl,
+  deny /lib/** wl,
+  deny /lib64/** wl,
+  deny /media/** wl,
+  deny /mnt/** wl,
+  deny /opt/** wl,
+  deny /proc/** wl,
+  deny /root/** wl,
+  deny /sbin/** wl,
+  deny /srv/** wl,
+  deny /tmp/** wl,
+  deny /sys/** wl,
+  deny /usr/** wl,
+
+  audit /** w,
+
+  /var/run/nginx.pid w,
+
+  /usr/sbin/nginx ix,
+
+  deny /bin/dash mrwklx,
+  deny /bin/sh mrwklx,
+  deny /usr/bin/top mrwklx,
+
+
+  capability chown,
+  capability dac_override,
+  capability setuid,
+  capability setgid,
+  capability net_bind_service,
+
+  deny @{PROC}/* w,   # deny write for all files directly in /proc (not in a subdir)
+  # deny write to files not in /proc/<number>/** or /proc/sys/**
+  deny @{PROC}/{[^1-9],[^1-9][^0-9],[^1-9s][^0-9y][^0-9s],[^1-9][^0-9][^0-9][^0-9]*}/** w,
+  deny @{PROC}/sys/[^k]** w,  # deny /proc/sys except /proc/sys/k* (effectively /proc/sys/kernel)
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,  # deny everything except shm* in /proc/sys/kernel/
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/mem rwklx,
+  deny @{PROC}/kmem rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  deny mount,
+
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+}
+
+로드를 해보자.
+$ sudo apparmor_parser -r -W /etc/apparmor.d/containers/docker-nginx
+
+실행을 해보자 .
+$ root@ubuntu16:/etc/init.d# docker run --security-opt "apparmor=docker-nginx"    \
+  -p 8000:8000 -d --name apparmor-nginx nginx
+
+$ docker container exec -it apparmor-nginx bash
+
+root@d8809e8bbaa4:/# apt-get update
+0% [Waiting for headers] [Waiting for headers]                              
+
+root@d8809e8bbaa4:/# touch ~/aa  
+touch: cannot touch '/root/aa': Permission denied
+
+root@ubuntu16:~# aa-status --verbose
+apparmor module is loaded.
+15 profiles are loaded.
+15 profiles are in enforce mode.
+   /sbin/dhclient
+   /usr/bin/lxc-start
+   /usr/bin/ubuntu-core-launcher
+   /usr/lib/NetworkManager/nm-dhcp-client.action
+   /usr/lib/NetworkManager/nm-dhcp-helper
+   /usr/lib/connman/scripts/dhclient-script
+   /usr/lib/lxd/lxd-bridge-proxy
+   /usr/sbin/mysqld
+   /usr/sbin/tcpdump
+   docker-default
+   docker-nginx
+   lxc-container-default
+   lxc-container-default-cgns
+   lxc-container-default-with-mounting
+   lxc-container-default-with-nesting
+
+언로드를 해보자. 
+root@ubuntu16:~# systemctl stop apparmor.service
+root@ubuntu16:~# systemctl status apparmor.service
+● apparmor.service - LSB: AppArmor initialization
+   Loaded: loaded (/etc/init.d/apparmor; bad; vendor preset: enabled)
+   Active: inactive (dead) since Mon 2018-12-10 22:55:10 KST; 33min ago
+     Docs: man:systemd-sysv-generator(8)
+
+root@ubuntu16:~# apparmor_parser -R  /etc/apparmor.d/containers/docker-nginx
+root@ubuntu16:~# systemctl start apparmor.service
+
+
+
+없어진걸 확인할 수있다. 
+root@ubuntu16:~#  aa-status --verbose
+apparmor module is loaded.
+14 profiles are loaded.
+14 profiles are in enforce mode.
+   /sbin/dhclient
+   /usr/bin/lxc-start
+   /usr/bin/ubuntu-core-launcher
+   /usr/lib/NetworkManager/nm-dhcp-client.action
+   /usr/lib/NetworkManager/nm-dhcp-helper
+   /usr/lib/connman/scripts/dhclient-script
+   /usr/lib/lxd/lxd-bridge-proxy
+   /usr/sbin/mysqld
+   /usr/sbin/tcpdump
+   docker-default
+   lxc-container-default
+   lxc-container-default-cgns
+   lxc-container-default-with-mounting
+   lxc-container-default-with-nesting
+0 profiles are in complain mode.
+1 processes have profiles defined.
+1 processes are in enforce mode.
+   /usr/sbin/mysqld (4867) 
+0 processes are in complain mode.
+0 processes are unconfined but have a profile defined.
