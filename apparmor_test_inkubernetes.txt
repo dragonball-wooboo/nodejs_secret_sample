@@ -1,0 +1,119 @@
+apparmor in GKE 
+https://kubernetes.io/docs/tutorials/clusters/apparmor/
+
+bawoowow@cloudshell:~ (bawoo-220412)$ kubectl get nodes -o=jsonpath=$'{range .items[*]}{@.metadata.name}: {@.status.nodeInfo.kubeletVersion}\n{end}'
+gke-standard-cluster-1-default-pool-76b543b7-70ct: v1.10.9-gke.5
+gke-standard-cluster-1-default-pool-76b543b7-j5hz: v1.10.9-gke.5
+gke-standard-cluster-1-default-pool-76b543b7-tp3f: v1.10.9-gke.5
+
+
+bawoowow@cloudshell:~ (bawoo-220412)$ cat /sys/module/apparmor/parameters/enabled
+Y
+
+bawoowow@cloudshell:~ (bawoo-220412)$ kubectl get nodes -o=jsonpath=$'{range .items[*]}{@.metadata.name}: {@.status.nodeInfo.containerRuntimeVersion}\n{end}'
+gke-standard-cluster-1-default-pool-76b543b7-70ct: docker://17.3.2
+gke-standard-cluster-1-default-pool-76b543b7-j5hz: docker://17.3.2
+gke-standard-cluster-1-default-pool-76b543b7-tp3f: docker://17.3.2
+
+
+그냥 들어가서 보자.
+bawoowow@cloudshell:~ (bawoo-220412)$ gcloud compute ssh gke-standard-cluster-1-default-pool-76b543b7-70ct --zone us-central1-a
+
+bawoowow@gke-standard-cluster-1-default-pool-76b543b7-70ct ~ $ sudo cat /sys/kernel/security/apparmor/profiles | sort
+docker-default (enforce)
+
+
+gcloud ssh 로 command명령어 날리는 구문을 찾았다.  (-- 붙이면된다. 
+https://stackoverflow.com/questions/39098341/gcloud-compute-execute-command-remotely
+$ gcloud compute ssh --zone ZONE INSTANCE -- 'cd /tmp && python some.py'
+From gcloud compute ssh --help:
+
+ [-- IMPLEMENTATION-ARGS ...]
+    Flags and positionals passed to the underlying ssh implementation.
+
+    The '--' argument must be specified between gcloud specific args on the
+    left and IMPLEMENTATION-ARGS on the right. Example:
+
+        $ gcloud compute ssh example-instance --zone us-central1-a -- -vvv \
+            -L 80:%INSTANCE%:80
+
+다시 실행(잘나오네 성공)
+bawoowow@cloudshell:~ (bawoo-220412)$ gcloud compute ssh gke-standard-cluster-1-default-pool-76b543b7-70ct --zone us-central1-a -- "sudo cat /sys/kernel/security/apparmor/profiles | sort"
+docker-default (enforce)
+Connection to 104.197.203.148 closed.
+
+
+
+bawoowow@cloudshell:~ (bawoo-220412)$ kubectl get nodes -o=jsonpath=$'{range .items[*]}{@.metadata.name}: {.status.conditions[?(@.reason=="KubeletReady")].message}\n{end}'
+gke-standard-cluster-1-default-pool-76b543b7-70ct: kubelet is posting ready status. AppArmor enabled
+gke-standard-cluster-1-default-pool-76b543b7-j5hz: kubelet is posting ready status. AppArmor enabled
+gke-standard-cluster-1-default-pool-76b543b7-tp3f: kubelet is posting ready status. AppArmor enabled
+
+<container_name>은 프로파일을 적용할 컨테이너의 이름이며, <profile_ref>는 적용할 프로파일을 지정한다.
+profile_ref는 다음 중 하나가 될 수 있다. 
+런타임/기본 런타임 프로필을 적용하기 위한 런타임/기본값 
+localhost/<profile_name> 이름으로 호스트에 로드된 프로파일을 적용하는 방법
+프로필이 로드되지 않음을 나타내는 확인되지 않음
+
+
+bawoowow@cloudshell:~ (bawoo-220412)$ NODES=(
+    # The SSH-accessible domain names of your nodes
+    gke-standard-cluster-1-default-pool-76b543b7-70ct
+    gke-standard-cluster-1-default-pool-76b543b7-j5hz
+    gke-standard-cluster-1-default-pool-76b543b7-tp3f)
+
+bawoowow@cloudshell:~ (bawoo-220412)$ for NODE in ${NODES[*]}; do gcloud compute ssh $NODE --zone us-central1-a -- 'sudo apparmor_parser -q <<EOF
+#include <tunables/global>
+
+profile k8s-apparmor-example-deny-write flags=(attach_disconnected) {
+  #include <abstractions/base>
+
+  file,
+
+  # Deny all file writes.
+  deny /** w,
+}
+EOF'
+done
+
+Connection to 104.197.203.148 closed.
+Warning: Permanently added 'compute.4739453699878014989' (ED25519) to the list of known hosts.
+Connection to 35.224.46.37 closed.
+Warning: Permanently added 'compute.8338050795394289677' (ED25519) to the list of known hosts.
+Connection to 35.239.152.17 closed.
+
+bawoowow@cloudshell:~ (bawoo-220412)$ vim hello-apparmor.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hello-apparmor
+  annotations:
+    # Tell Kubernetes to apply the AppArmor profile "k8s-apparmor-example-deny-write".
+    # Note that this is ignored if the Kubernetes node is not running version 1.4 or greater.
+    container.apparmor.security.beta.kubernetes.io/hello: localhost/k8s-apparmor-example-deny-write
+spec:
+  containers:
+  - name: hello
+    image: busybox
+    command: [ "sh", "-c", "echo 'Hello AppArmor!' && sleep 1h" ]
+
+bawoowow@cloudshell:~ (bawoo-220412)$ kubectl create -f ./hello-apparmor.yaml
+pod "hello-apparmor" created
+
+
+13s         13s          1         hello-apparmor.156f03b51105ff09   Pod                                Normal    Scheduled               default-scheduler                                            Successfully assigned hello-apparmor to gke-standard-cluster-1-default-pool-76b543b7-j5hz
+13s         13s          1         hello-apparmor.156f03b5272aaac6   Pod                                Normal    SuccessfulMountVolume   kubelet, gke-standard-cluster-1-default-pool-76b543b7-j5hz   MountVolume.SetUp succeeded for volume "default-token-gv9mm"
+11s         11s          1         hello-apparmor.156f03b58444f995   Pod       spec.containers{hello}   Normal    Pulling                 kubelet, gke-standard-cluster-1-default-pool-76b543b7-j5hz   pulling image "busybox"
+11s         11s          1         hello-apparmor.156f03b5a544beb4   Pod       spec.containers{hello}   Normal    Pulled                  kubelet, gke-standard-cluster-1-default-pool-76b543b7-j5hz   Successfully pulled image "busybox"
+11s         11s          1         hello-apparmor.156f03b5aab9fc02   Pod       spec.containers{hello}   Normal    Created                 kubelet, gke-standard-cluster-1-default-pool-76b543b7-j5hz   Created container
+10s         10s          1         hello-apparmor.156f03b5b0b68deb   Pod       spec.containers{hello}   Normal    Started                 kubelet, gke-standard-cluster-1-default-pool-76b543b7-j5hz   Started container
+
+
+bawoowow@cloudshell:~ (bawoo-220412)$ kubectl exec hello-apparmor cat /proc/1/attr/current
+k8s-apparmor-example-deny-write (enforce)
+
+bawoowow@cloudshell:~ (bawoo-220412)$ kubectl exec hello-apparmor touch /tmp/test
+touch: /tmp/test: Permission denied
+command terminated with exit code 1
+
+
