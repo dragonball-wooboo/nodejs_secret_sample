@@ -1,6 +1,6 @@
 참고자료: https://docs.docker.com/engine/security/apparmor/#understand-the-policies
 https://code.i-harness.com/ko-kr/docs/docker~17/engine/security/apparmor/index
-
+※ubuntu16.04 lts에서 테스트 해봄.
 
 root@ubuntu16:~# docker run --rm -it --security-opt apparmor=docker-default hello-world
 Unable to find image 'hello-world:latest' locally
